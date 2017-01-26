@@ -9,6 +9,7 @@ LOCKPATH=/tmp/backup.lock
 PROFILE_PATH=
 SOURCE_PATH=
 TARGET_PATH=
+SMBB_AUTOMOUNT=false
 
 # Prints the usage of the script in case of using the help command.
 printUsage () {
@@ -121,11 +122,17 @@ validateParams () {
     if [ ! -f "$PROFILE_PATH" ]; then
       fc_error "The profile file '$PROFILE_PATH' does not exist!"
       return 1
-    elif ([ -z "$SMBB_SOURCE_PATH" ] || [ -z "$SMBB_TARGET_PATH" ]) && [ -z "$SMBB_MAPPING_PATH" ]; then
+    elif ([ -z "$SMBB_SOURCE_PATH" ] || [ -z "$SMBB_TARGET_PATH" ]) && [ -z "$SMBB_MAPPING_FILE" ]; then
       fc_error "The profile must either define source and target paths or the path to a mapping file!"
       return 1
-    elif [ -n "$SMBB_MAPPING_PATH" ] && [ ! -f "$SMBB_MAPPING_PATH" ]; then
-      fc_error "The mapping file '$SMBB_MAPPING_PATH' does not exist!"
+    elif [ -n "$SMBB_MAPPING_FILE" ] && [ ! -f "$SMBB_MAPPING_FILE" ]; then
+      fc_error "The mapping file '$SMBB_MAPPING_FILE' does not exist!"
+      return 1
+    elif [ -n "$SMBB_EXCLUSION_FILE" ] && [ ! -f "$SMBB_EXCLUSION_FILE" ]; then
+      fc_error "The exclusion file '$SMBB_EXCLUSION_FILE' does not exist!"
+      return 1
+    elif [ -n "$SMBB_MOUNTPOINT" ] && [ ! "$SMBB_AUTOMOUNT" = true ] && [ -z "$SMBB_SAMBA_USER" ]; then
+      fc_error 'The samba user must not be empty, if automatic mounting is disabled!'
       return 1
     fi
   fi
@@ -231,24 +238,28 @@ fi
 trap 'rm -f "$LOCKPATH"; exit $?' INT TERM EXIT
 
 ## mount Samba share if necessary
-SMBB_UNMOUNT=false
+UNMOUNT=false
 if [ ! -z "$SMBB_MOUNTPOINT" ]; then
   # check if not already mounted
   if fc_is_mounted "$SMBB_MOUNTPOINT"; then
-    SMBB_UNMOUNT=true
     fc_info "'$SMBB_MOUNTPOINT' is already mounted."
+  # check if mounting failed
   elif ! fc_mount "$SMBB_MOUNTPOINT"; then
     fc_error "Failed to mount '$SMBB_MOUNTPOINT'!"
     exit 6
+  else
+    UNMOUNT=true
   fi
 fi
 
 ## backup files
 # TODO merge sync.sh
-if [ -n "$MAPPING_PATH" ]; then
+if [ -n "$SMBB_MAPPING_FILE" ]; then
   #TODO push all mapping entries
+  echo 'push multiple'
 else
   #TODO single push
+  echo 'push single'
 fi
 
 ## unmount Samba share if mounted during execution
