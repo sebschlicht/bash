@@ -1,10 +1,14 @@
 #!/bin/bash
-PROGRAM_NAME='smbb'
-PROGRAM_TITLE='Samba-Share Backup Script'
+readonly PROGRAM_NAME='smbb'
+readonly PROGRAM_TITLE='Samba-Share Backup Script'
 QUIET=false
+CFGPREFIX='SMBB'
 
 # variable initialization section
-readonly LOCKPATH=/tmp/backup.lock
+LOCKPATH=/tmp/backup.lock
+PROFILE_PATH=
+SOURCE_PATH=
+TARGET_PATH=
 
 # Prints the usage of the script in case of using the help command.
 printUsage () {
@@ -51,6 +55,11 @@ parseArguments () {
       -q|--quiet)
       QUIET=true
       ;;
+      # profile
+      -p|--profile)
+      PROFILE_PATH="$2"
+      shift
+      ;;
       # unknown option
       -*)
       fc_error "Unknown option '$key'!"
@@ -68,40 +77,107 @@ parseArguments () {
   done
   
   # check for valid number of parameters
-  if [ -z "$CONFIG_PATH" ]; then
-    fc_error 'Too few arguments!'
-    return 2
+  if [ -z "$PROFILE_PATH" ]; then
+    if [ -z "$SOURCE_PATH" ] || [ -z "$TARGET_PATH" ]; then
+      fc_error 'Too few arguments!'
+      return 2
+    fi
   fi
+  
+  # load prefixed variables from profile
+  if [ -n "$PROFILE_PATH" ]; then
+    if ! load_config "$PROFILE_PATH" "$CFGPREFIX"; then
+      return 3
+    fi
+  fi
+  # override loaded variables that have been passed directly
+  local VARIABLES=( 'SOURCE_PATH' 'TARGET_PATH' )
+  override_config "$VARIABLES" "$CFGPREFIX"
 
-  # check parameter validity
-  if [ ! -e "$CONFIG_PATH" ]; then
-    fc_error "The specified configuration file '$CONFIG_PATH' does not exist!"
+  # check validity of parameter values
+  if ! validateParams; then
     return 3
   fi
 }
 
 # Handles the parameters (arguments that aren't an option) and checks if their count is valid.
 handleParameter () {
-  # 1. parameter: configuration file path
-  if [ -z "$CONFIG_PATH" ]; then
-    CONFIG_PATH="$1"
+  # 1. parameter: source path
+  if [ -z "$SOURCE_PATH" ]; then
+    SOURCE_PATH="$1"
+  # 2. parameter: target path
+  elif [ -z "$TARGET_PATH" ]; then
+    TARGET_PATH="$1"
   else
     # too many parameters
     return 1
   fi
 }
 
-# Loads a configuration file (bash) if it only includes variables and/or comments.
-function load_config () {
+# Validates the parameter values.
+validateParams () {
+  # validate profile
+  if [ -n "$PROFILE_PATH" ]; then
+    if [ ! -f "$PROFILE_PATH" ]; then
+      fc_error "The profile file '$PROFILE_PATH' does not exist!"
+      return 1
+    elif ([ -z "$SMBB_SOURCE_PATH" ] || [ -z "$SMBB_TARGET_PATH" ]) && [ -z "$SMBB_MAPPING_PATH" ]; then
+      fc_error "The profile must either define source and target paths or the path to a mapping file!"
+      return 1
+    elif [ -n "$SMBB_MAPPING_PATH" ] && [ ! -f "$SMBB_MAPPING_PATH" ]; then
+      fc_error "The mapping file '$SMBB_MAPPING_PATH' does not exist!"
+      return 1
+    fi
+  fi
+  
+  # validate source and target paths (if specified)
+  if [ -n "$SMBB_SOURCE_PATH" ] && [ ! -e "$SMBB_SOURCE_PATH" ]; then
+    fc_error "The source path '$SMBB_SOURCE_PATH' does not exist!"
+    return 1
+  elif [ -n "$SMBB_TARGET_PATH" ] && [ ! -e "$SMBB_TARGET_PATH" ]; then
+    fc_error "The target path '$SMBB_TARGET_PATH' does not exist!"
+    return 1
+  fi
+}
+
+# Loads a configuration file (bash) if it only includes variable assignments.
+# Supports empty lines, comments and prefix filtering.
+#
+# Parameters:
+# 1. file path
+# 2. (optional) variable prefix
+load_config () {
   local CFGPATH="$1"
-  # TODO this is NOT working: key=value;echo 'foo' still possible!
-  if egrep -q -v '^$|^#|^[^ ]*=[^;]*' "$CFGPATH"; then
+  local PREFIX="$2"
+  if [ -n "$PREFIX" ]; then
+    local PREFIX="$PREFIX"_
+  fi
+  local PATTERN="^$|^#|^${PREFIX}[^ ]*=[^;]*$"
+  
+  local VIOLATIONS=$(egrep -v "$PATTERN" "$CFGPATH")
+  if [ -n "$VIOLATIONS" ]; then
     # malformed configuration file
-    local LINES=$(egrep -v '^$|^#|^[^ ]*=[^;]*' "$CFGPATH")
-    fc_error "The configuration file is malformed. Only comments and variable declarations are allowed. The following line(s) violate(s) this rule:\n'${LINES}'"
+    local ERROR_MSG='The configuration file is malformed. Only comments and variable declarations are allowed'
+    if [ -n "$PREFIX" ]; then
+      local ERROR_MSG="$ERROR_MSG. All variables must start with '$PREFIX'"
+    fi
+    fc_error "$ERROR_MSG."
+    fc_error "The following line(s) violate(s) this rule:\n'${VIOLATIONS}'"
     return 1
   fi
   source "$CFGPATH"
+}
+
+# Overrides parameters loaded from a configuration file with values specified by the user directly.
+override_config () {
+  local VARIABLES="$1"
+  local PREFIX="$2"
+  for VAR in "$VARIABLES"; do
+    local VALUE="${!VAR}"
+    if [ -n "$VALUE" ]; then
+      eval "${PREFIX}_$VAR"=\$VALUE
+    fi
+  done
 }
 
 ##############################
@@ -136,11 +212,13 @@ fc_mount () {
   return $(fc_is_mounted "$SMBB_MOUNTPOINT")
 }
 
+#############
 # entry point
+#############
 parseArguments "$@"
 SUCCESS=$?
 if [ "$SUCCESS" -ne 0 ]; then
-  fc_error "Use the '-h' switch for help."
+  fc_info "Use the '-h' switch for help."
   exit "$SUCCESS"
 fi
 
@@ -151,11 +229,6 @@ if [ -f "$LOCKPATH" ]; then
   exit 4
 fi
 trap 'rm -f "$LOCKPATH"; exit $?' INT TERM EXIT
-
-## load configuration file
-if ! load_config "$CONFIG_PATH"; then
-  exit 5
-fi
 
 ## mount Samba share if necessary
 SMBB_UNMOUNT=false
@@ -172,6 +245,11 @@ fi
 
 ## backup files
 # TODO merge sync.sh
+if [ -n "$MAPPING_PATH" ]; then
+  #TODO push all mapping entries
+else
+  #TODO single push
+fi
 
 ## unmount Samba share if mounted during execution
 if [ "$SMBB_UNMOUNT" = true ]; then
