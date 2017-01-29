@@ -87,7 +87,10 @@ parseArguments () {
   
   # load prefixed variables from profile
   if [ -n "$PROFILE_PATH" ]; then
-    if ! load_config "$PROFILE_PATH" "$CFGPREFIX"; then
+    if [ ! -f "$PROFILE_PATH" ]; then
+      fc_error "The profile '$PROFILE_PATH' does not exist!"
+      return 3
+    elif ! load_config "$PROFILE_PATH" "$CFGPREFIX"; then
       return 3
     fi
   fi
@@ -117,12 +120,9 @@ handleParameter () {
 
 # Validates the parameter values.
 validateParams () {
-  # validate profile
+  # validate profile (existence-check)
   if [ -n "$PROFILE_PATH" ]; then
-    if [ ! -f "$PROFILE_PATH" ]; then
-      fc_error "The profile file '$PROFILE_PATH' does not exist!"
-      return 1
-    elif ([ -z "$SMBB_SOURCE_PATH" ] || [ -z "$SMBB_TARGET_PATH" ]) && [ -z "$SMBB_MAPPING_FILE" ]; then
+    if ([ -z "$SMBB_SOURCE_PATH" ] || [ -z "$SMBB_TARGET_PATH" ]) && [ -z "$SMBB_MAPPING_FILE" ]; then
       fc_error "The profile must either define source and target paths or the path to a mapping file!"
       return 1
     elif [ -n "$SMBB_MAPPING_FILE" ] && [ ! -f "$SMBB_MAPPING_FILE" ]; then
@@ -219,6 +219,27 @@ fc_mount () {
   return $(fc_is_mounted "$SMBB_MOUNTPOINT")
 }
 
+# Pushes a directory structure from one location to another.
+# Supports SMBB_EXCLUSION_FILE and SMBB_DRY_RUN.
+fc_push () {
+  local SOURCE="$1"
+  local TARGET="$2"
+  local ARGS=()
+  # output: human readable, change summary, progress bar
+  ARGS+=('-h' '-i' '--progress')
+  # transfer: archive files, no permissions, no space-splitting, skip files if target newer, compress
+  ARGS+=('-a' '--no-p' '-s' '-u' '-z')
+  # exclusion file
+  if [ -n "$SMBB_EXCLUSION_FILE" ]; then
+    ARGS+=("--exclude-from=$SMBB_EXCLUSION_FILE")
+  fi
+  # dry run
+  if [ "$SMBB_DRY_RUN" = true ]; then
+    ARGS+=('-n')
+  fi
+  rsync "${ARGS[@]}" "$SOURCE" "$TARGET"
+}
+
 #############
 # entry point
 #############
@@ -253,13 +274,14 @@ if [ ! -z "$SMBB_MOUNTPOINT" ]; then
 fi
 
 ## backup files
-# TODO merge sync.sh
 if [ -n "$SMBB_MAPPING_FILE" ]; then
-  #TODO push all mapping entries
-  echo 'push multiple'
+  # backupp all mapping entries
+  grep -v -e '^$' -e '^#' "$SMBB_MAPPING_FILE" | while read from to; do
+    fc_push "$from" "$to"
+  done
 else
-  #TODO single push
-  echo 'push single'
+  # backup single directory
+  fc_push "$SMBB_SOURCE" "$SMBB_TARGET"
 fi
 
 ## unmount Samba share if mounted during execution
