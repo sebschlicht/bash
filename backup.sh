@@ -159,7 +159,7 @@ load_config () {
   if [ -n "$PREFIX" ]; then
     local PREFIX="$PREFIX"_
   fi
-  local PATTERN="^$|^#|^${PREFIX}[^ ]*=[^;]*$"
+  local PATTERN="^$|^#|^${PREFIX}[^ ]*=[^;\$\`]*$"
   
   local VIOLATIONS=$(egrep -v "$PATTERN" "$CFGPATH")
   if [ -n "$VIOLATIONS" ]; then
