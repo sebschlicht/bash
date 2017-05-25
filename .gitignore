@@ -3,3 +3,7 @@
 
 # backup files
 *~
+
+# separate repositories
+/xpower/
+/nas/
